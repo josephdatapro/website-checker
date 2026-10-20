@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Is My Website Broken? — Free 10-Second Checker</title>
+<meta name="description" content="A free 10-second check for small business owners: does your site load, can anyone fake your email, is your copyright year stale, and does your website match your Google listing? No signup, no spam.">
+<style>
+:root{--green:#1a7f37;--red:#b42318;--amber:#b54708;--ink:#1d2939;--muted:#667085}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);max-width:640px;margin:0 auto;padding:20px;line-height:1.5;background:#f9fafb}
+h1{font-size:1.6em;margin:.4em 0}
+p.lede{color:var(--muted)}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:18px;margin:16px 0}
+label{display:block;font-weight:600;margin:10px 0 4px}
+input,button{font-size:1em;padding:12px;border-radius:8px;width:100%}
+input{border:1px solid #d0d5dd}
+button{background:#101828;color:#fff;border:0;font-weight:700;cursor:pointer;margin-top:12px}
+button:disabled{opacity:.55;cursor:wait}
+.result{border-left:5px solid #d0d5dd;padding:10px 14px;margin:10px 0;background:#fff;border-radius:0 8px 8px 0}
+.result.pass{border-color:var(--green)}
+.result.fail{border-color:var(--red)}
+.result.warn{border-color:var(--amber)}
+.result .t{font-weight:700}
+.result .d{color:var(--muted);font-size:.94em}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.78em;font-weight:700;color:#fff;margin-bottom:6px}
+.pass .badge{background:var(--green)}.fail .badge{background:var(--red)}.warn .badge{background:var(--amber)}
+.offers{background:#101828;color:#fff;border-radius:10px;padding:18px;margin:16px 0}
+.offers a{color:#fff}
+.small{font-size:.85em;color:var(--muted)}
+hr{border:0;border-top:1px solid #e5e7eb;margin:24px 0}
+</style>
+</head>
+<body>
+
+<h1>Is My Website Broken?</h1>
+<p class="lede">A free 10-second check for small business owners. Type your business website below and see what the outside world sees. No signup, no spam, no tracking — everything runs right here in your browser.</p>
+
+<div class="card">
+<label for="domain">Your business website</label>
+<input id="domain" inputmode="url" placeholder="e.g. example.com" autocomplete="off">
+<label for="gphone">Phone number on your Google listing <span class="small">(optional)</span></label>
+<input id="gphone" inputmode="tel" placeholder="(555) 123-4567">
+<label for="wphone">Phone number shown on your website <span class="small">(optional)</span></label>
+<input id="wphone" inputmode="tel" placeholder="(555) 123-4567">
+<label for="fyear">Copyright year at the bottom of your homepage <span class="small">(optional)</span></label>
+<input id="fyear" inputmode="numeric" placeholder="e.g. 2021">
+<button id="run" onclick="runCheck()">Run the free check</button>
+</div>
+
+<div id="results"></div>
+
+<div id="next" style="display:none">
+  <div class="card">
+    <div id="nextstep"></div>
+    <p>This was check <b>2 of 5</b> in our full <b>5-Point Data Health Check</b>. Want the other four? Here are your options, all flat prices, no hourly billing:</p>
+    <ul>
+      <li><b>Snapshot</b> — the full 5-Point Data Health Check, <b>$49</b>, done in 48 hours.</li>
+      <li><b>Fix-It</b> — the check plus I fix everything on the list for you, <b>$149</b>.</li>
+      <li><b>Watchdog</b> — the check now, then I re-run it every quarter so it stays fixed, <b>$29/quarter</b>.</li>
+    </ul>
+    <p><a id="mailto" href="#">Send me your result — I'll tell you what to fix first</a></p>
+    <p class="small">Know an owner whose site looks worse than yours? <b>Send them this link.</b></p>
+  </div>
+</div>
+
+<hr>
+<section>
+<h2>What this page checks (and what it doesn't)</h2>
+<p class="small">This checker looks at public signals only: whether your site answers at all, whether anyone on earth can send email pretending to be you (email authentication — SPF graded by whether it hard-fails spoofed mail, DKIM signing, DMARC policy), whether your site's copyright year is stale, and whether the phone number on your Google listing matches the one on your website. It runs in your browser — we never scrape your site or Google on our behalf, and we can't see what you typed unless you send it to us. It's check 2 of 5 of our <b>5-Point Data Health Check</b> ($49, 48-hour turnaround). For the full audit with all five checks plus a fix list, reply via the link above.</p>
+</section>
+
+<script>
+function cleanDomain(raw){
+  let d=(raw||"").trim().toLowerCase();
+  d=d.replace(/^https?:\/\//,"").replace(/^www\./,"").split("/")[0].split("?")[0].split("#")[0];
+  return d;
+}
+function digits(s){return (s||"").replace(/\D/g,"");}
+
+async function dohTxt(name){
+  try{
+    const r=await fetch("https://dns.google/resolve?name="+encodeURIComponent(name)+"&type=TXT");
+    if(!r.ok) return null;
+    const j=await r.json();
+    return (j.Answer||[]).map(a=>a.data.replace(/^"|"$/g,""));
+  }catch(e){return null;}
+}
+async function dohMx(name){
+  try{
+    const r=await fetch("https://dns.google/resolve?name="+encodeURIComponent(name)+"&type=MX");
+    if(!r.ok) return null;
+    const j=await r.json();
+    return (j.Answer||[]).length>0;
+  }catch(e){return null;}
+}
+async function dohDkim(d){
+  // DKIM records live under a selector we can't know in advance — probe the common ones.
+  const sels=["google","default","mail","k1","s1","s2","selector1","selector2","dkim","email"];
+  const hits=await Promise.all(sels.map(async s=>{
+    const t=await dohTxt(s+"._domainkey."+d);
+    if(!t) return null;
+    // Long DKIM records are split into multiple DNS strings — also try them joined.
+    const joined=t.join("");
+    const rec=t.find(x=>/v\s*=\s*DKIM1/i.test(x)||(/k\s*=\s*rsa/i.test(x)&&/p\s*=/i.test(x)))
+      ||((/DKIM1/i.test(joined)||/p\s*=/.test(joined))?joined:null);
+    return rec?{sel:s,rec:rec}:null;
+  }));
+  return hits.filter(Boolean);
+}
+function dkimBits(rec){
+  const m=rec.match(/p\s*=\s*([A-Za-z0-9+/=]+)/);
+  if(!m||!m[1]) return null; // empty p= = revoked key
+  const n=m[1].length;
+  if(n>=300) return 2048;
+  if(n>=150) return 1024;
+  return null;
+}
+async function siteAlive(d){
+  // no-cors: rejects on DNS failure, resolves (opaque) if anything answers.
+  try{
+    await fetch("https://"+d,{mode:"no-cors",redirect:"follow",cache:"no-store"});
+    return {alive:true,note:"answered"};
+  }catch(e){
+    try{
+      await fetch("http://"+d,{mode:"no-cors",redirect:"follow",cache:"no-store"});
+      return {alive:true,note:"answered on plain http (no https)"};
+    }catch(e2){
+      return {alive:false,note:"no answer — dead site or bad domain"};
+    }
+  }
+}
+async function httpStatus(d){
+  // Best-effort status code via a free CORS proxy. Honest fallback on failure.
+  try{
+    const r=await fetch("https://api.allorigins.win/get?url="+encodeURIComponent("https://"+d));
+    if(!r.ok) return null;
+    const j=await r.json();
+    return j.status.http_code||null;
+  }catch(e){return null;}
+}
+
+function row(cls,badge,title,desc){
+  return '<div class="result '+cls+'"><span class="badge">'+badge+'</span><div class="t">'+title+'</div><div class="d">'+desc+'</div></div>';
+}
+
+async function runCheck(){
+  const btn=document.getElementById("run");
+  const d=cleanDomain(document.getElementById("domain").value);
+  if(!d){alert("Please type your website address first.");return;}
+  btn.disabled=true;btn.textContent="Checking…";
+  const box=document.getElementById("results");box.innerHTML="";
+  const fails=[];
+  const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  // 1. Site loads?
+  const live=await siteAlive(d);
+  if(live.alive){
+    const code=await httpStatus(d);
+    if(code&&code>=200&&code<300){
+      box.innerHTML+=row("pass","OK","Your site loads ("+code+")","Your homepage answered the check. Visitors and Google can reach it.");
+    }else{
+      box.innerHTML+=row("pass","OK","Your site answers",esc(live.note)+". (Couldn't read the exact status code from here — the important part is it answered.)");
+    }
+  }else{
+    box.innerHTML+=row("fail","BROKEN","Your site did not answer",esc(live.note)+". If a customer or Google's ad clicks land here right now, they see nothing.");
+    fails.push({t:"Site doesn't answer",a:"Check that the domain is spelled right, the hosting bill is paid, and the site hasn't been suspended. Then re-run this checker."});
+  }
+
+  // 2+3. SPF / DMARC
+  const txts=await dohTxt(d);
+  if(txts===null){
+    box.innerHTML+=row("warn","UNKNOWN","Email protection: couldn't check","Your domain's records didn't answer from here. Try again on stronger signal — or ask your email provider whether SPF and DMARC are set up.");
+  }else{
+    const spfRecs=txts.filter(t=>/^v=spf1/i.test(t.trim()));
+    const mx=await dohMx(d);
+    const dmarcTxts=await dohTxt("_dmarc."+d);
+    const dmarc=(dmarcTxts||[]).find(t=>/^v=DMARC1/i.test(t.trim()))||null;
+    const pol=dmarc?(dmarc.match(/p\s*=\s*(reject|quarantine|none)/i)||[])[1]:null;
+    // SPF graded by enforcement, not existence: -all = hard fail (spoofed mail rejected),
+    // ~all = softfail (flagged, not rejected), ?all/+all or missing = open, multiple records = broken.
+    if(spfRecs.length>1){
+      box.innerHTML+=row("fail","BROKEN","SPF is broken ("+spfRecs.length+" records)","A domain may only publish ONE SPF record — with two or more, receivers reject all of them. Fix this with your email provider.");
+      fails.push({t:"Multiple SPF records",a:"Delete the extra SPF records so exactly one remains, ending in -all. Your email provider can do this."});
+    }else if(spfRecs.length===1){
+      const term=(spfRecs[0].match(/([\-~?+]all)\b/i)||[])[1];
+      if(term==="-all"){
+        box.innerHTML+=row("pass","OK","SPF enforced (hard fail)","Your SPF record ends in -all — only approved servers can send email as you, and everything else gets rejected.");
+      }else if(term==="~all"){
+        box.innerHTML+=row("warn","WEAK","SPF is softfail (~all)","Your SPF record is present but ends in ~all — spoofed mail gets flagged, not rejected. Tighten it to -all once your legitimate senders are confirmed.");
+        fails.push({t:"SPF not enforcing (~all)",a:"Ask your email provider to change the end of your SPF record from ~all to -all."});
+      }else if(term){
+        box.innerHTML+=row("fail","RISK","SPF is wide open ("+esc(term)+")","Your SPF record ends in "+esc(term)+" — it does not reject spoofed mail at all. Treat this like having no SPF.");
+        fails.push({t:"SPF open ("+term+")",a:"Ask your email provider to change the end of your SPF record to -all."});
+      }else{
+        box.innerHTML+=row("warn","WEAK","SPF has no terminal rule","Your SPF record doesn't end in any all-rule — receivers don't know what to do with mail that fails it. It should end in -all.");
+        fails.push({t:"SPF missing all-rule",a:"Ask your email provider to review your SPF record and end it in -all."});
+      }
+    }else{
+      box.innerHTML+=row("fail","RISK","No SPF record","Anyone on earth can send email pretending to be you. Phishing against your name is one DNS line away.");
+      fails.push({t:"No SPF",a:"Ask your email provider to add an SPF record to your domain. It's a one-line DNS change and most providers will do it for you."});
+    }
+    // DKIM: probe common selectors (a domain can sign under a selector we don't know — be honest about the gap).
+    const dkim=await dohDkim(d);
+    if(dkim.length){
+      const parts=dkim.map(h=>{
+        const bits=dkimBits(h.rec);
+        return bits?("selector "+h.sel+", about "+bits+"-bit key"):("selector "+h.sel+" (key found)");
+      });
+      const strong=dkim.some(h=>{const b=dkimBits(h.rec);return b&&b>=2048;});
+      if(strong){
+        box.innerHTML+=row("pass","OK","DKIM signing is on","DKIM signatures found ("+esc(parts.join("; "))+") — receivers can verify your mail really came from you.");
+      }else{
+        box.innerHTML+=row("warn","WEAK","DKIM signs, but look at key size","DKIM signatures found ("+esc(parts.join("; "))+") — signatures around 2048-bit hold up best; 1024-bit keys get flagged by some receivers in 2026. Ask your provider what key size signs your mail.");
+      }
+    }else{
+      box.innerHTML+=row("warn","CHECK","No DKIM found under common selectors","Couldn't find a DKIM record under the usual selectors (google, default, mail, k1, selector1…). Your provider may use a custom selector name — but if there's no DKIM at all, your mail carries no cryptographic signature.");
+    }
+    if(!mx){
+      box.innerHTML+=row("warn","CHECK","No mail server found","No MX record on your domain — email to @"+esc(d)+" can't be delivered. Fine if you only use Gmail/Outlook, but worth knowing.");
+    }
+    if(pol&&/reject|quarantine/i.test(pol)){
+      box.innerHTML+=row("pass","OK","DMARC protection is on (p="+esc(pol.toLowerCase())+")","Spoofed emails using your name get blocked or flagged. You're covered.");
+    }else if(dmarc){
+      box.innerHTML+=row("warn","WEAK","DMARC is in 'report only' mode","Your DMARC policy is p=none — it watches, but it blocks nothing. Anyone can still spoof your address.");
+      fails.push({t:"DMARC not enforcing",a:"Move your DMARC policy from p=none to p=quarantine or p=reject once SPF/DKIM are verified. Your email provider can help."});
+    }else{
+      box.innerHTML+=row("fail","RISK","No DMARC record","There's no DMARC record at all — no spoofing reports, no enforcement. Combined with missing SPF, your email identity is unprotected.");
+      fails.push({t:"No DMARC",a:"Ask your email provider to add a DMARC record. Start with p=none to collect reports, then enforce."});
+    }
+  }
+
+  // 4. Copyright year
+  const fy=digits(document.getElementById("fyear").value);
+  const cur=new Date().getFullYear();
+  if(fy){
+    if(parseInt(fy,10)<cur){
+      box.innerHTML+=row("fail","STALE","Your site's copyright year is "+esc(fy),"A footer that says "+esc(fy)+" tells visitors you haven't touched the site in years. Cheap to fix, costly to ignore.");
+      fails.push({t:"Stale copyright year",a:"Update the footer year to "+cur+". Then ask yourself what else hasn't been touched since "+esc(fy)+"."});
+    }else{
+      box.innerHTML+=row("pass","OK","Copyright year is current ("+cur+")","Small trust signal, and yours passes.");
+    }
+  }else{
+    box.innerHTML+=row("warn","SKIPPED","Copyright year not checked","Scroll to the bottom of your homepage and look at the year — if it says anything older than "+cur+", it's telling visitors the site is stale.");
+  }
+
+  // 5. Phone mismatch
+  const gp=digits(document.getElementById("gphone").value);
+  const wp=digits(document.getElementById("wphone").value);
+  if(gp&&wp){
+    if(gp.slice(-7)===wp.slice(-7)){
+      box.innerHTML+=row("pass","OK","Phones match","Your Google listing and your website show the same phone number. Customers and Google trust that.");
+    }else{
+      box.innerHTML+=row("fail","MISMATCH","Phone numbers don't match","Google shows "+esc(gp)+" but your website shows "+esc(wp)+". Every customer who calls the wrong number is a lost sale — and Google notices inconsistent listings.");
+      fails.push({t:"Phone mismatch",a:"Pick the one true number and fix it in both places — Google Business Profile AND your website — today."});
+    }
+  }else{
+    box.innerHTML+=row("warn","SKIPPED","Phone match not checked","Open your Google listing and your website side by side. If the phone numbers differ, that's a lost customer waiting to happen.");
+  }
+
+  // Next step
+  const next=document.getElementById("next");
+  next.style.display="block";
+  if(fails.length){
+    const w=fails[0];
+    document.getElementById("nextstep").innerHTML="<h3>Your worst problem: "+esc(w.t)+"</h3><p>"+esc(w.a)+"</p>";
+  }else{
+    document.getElementById("nextstep").innerHTML="<h3>Nothing broken found tonight</h3><p>Everything this quick check looks at passes. Our full 5-Point Data Health Check digs into three more checks — listing consistency, duplicates, and freshness — that catch what a quick scan can't.</p>";
+  }
+  document.getElementById("mailto").href="mailto:barry.carter.carpenter@gmail.com?subject="+encodeURIComponent("Broken-website checker result for "+d)+"&body="+encodeURIComponent("I just ran the free broken-website checker on "+d+" and got "+fails.length+" problem(s): "+fails.map(f=>f.t).join(", ")+". Tell me what to fix first.");
+  btn.disabled=false;btn.textContent="Run the free check";
+  next.scrollIntoView({behavior:"smooth"});
+}
+</script>
+</body>
+</html>
